@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -17,7 +18,13 @@ console.log('🚀 RR SACCO Server Starting...');
 console.log('═══════════════════════════════════════\n');
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI, {
+const mongoUri = process.env.MONGODB_URI;
+if (!mongoUri) {
+    console.error('❌ MONGODB_URI not set in environment variables');
+    process.exit(1);
+}
+
+mongoose.connect(mongoUri, {
     useNewUrlParser: true,
     useUnifiedTopology: true
 })
@@ -36,9 +43,9 @@ mongoose.connect(process.env.MONGODB_URI, {
 const memberSchema = new mongoose.Schema({
     firstName: { type: String, required: true },
     lastName: { type: String, required: true },
-    email: { type: String, unique: true, required: true },
+    email: { type: String, unique: true, sparse: true, required: true },
     phone: String,
-    idNumber: { type: String, unique: true, required: true },
+    idNumber: { type: String, unique: true, sparse: true, required: true },
     dateOfBirth: Date,
     occupation: String,
     employer: String,
@@ -81,13 +88,7 @@ const loanSchema = new mongoose.Schema({
     nextPaymentDate: Date,
     loanPurpose: String,
     collateral: String,
-    paymentHistory: [
-        {
-            date: Date,
-            amount: Number,
-            remainingBalance: Number
-        }
-    ]
+    paymentHistory: [{ date: Date, amount: Number, remainingBalance: Number }]
 });
 
 const withdrawalSchema = new mongoose.Schema({
@@ -149,8 +150,8 @@ const saccoSettingsSchema = new mongoose.Schema({
 });
 
 const adminSchema = new mongoose.Schema({
-    username: { type: String, unique: true, required: true },
-    email: { type: String, unique: true, required: true },
+    username: { type: String, unique: true, sparse: true, required: true },
+    email: { type: String, unique: true, sparse: true, required: true },
     password: { type: String, required: true },
     role: { type: String, default: 'admin' },
     createdDate: { type: Date, default: Date.now }
@@ -165,7 +166,7 @@ const Transaction = mongoose.model('Transaction', transactionSchema);
 const SaccoSettings = mongoose.model('SaccoSettings', saccoSettingsSchema);
 const Admin = mongoose.model('Admin', adminSchema);
 
-// ===== INITIALIZE ADMIN & SETTINGS =====
+// ===== INITIALIZE =====
 
 async function initializeAdminUser() {
     try {
@@ -177,12 +178,10 @@ async function initializeAdminUser() {
                 email: 'admin@rrsacco.co.ke',
                 password: hashedPassword
             });
-            console.log('✓ Default admin created');
-            console.log('  Username: admin');
-            console.log('  Password: admin123');
+            console.log('✓ Default admin created (Username: admin, Password: admin123)');
         }
     } catch (error) {
-        console.log('Error initializing admin:', error.message);
+        console.log('Admin initialization:', error.message);
     }
 }
 
@@ -194,7 +193,7 @@ async function initializeSaccoSettings() {
             console.log('✓ SACCO settings initialized');
         }
     } catch (error) {
-        console.log('Error initializing settings:', error.message);
+        console.log('Settings initialization:', error.message);
     }
 }
 
@@ -235,20 +234,12 @@ const calculateLoanDetails = async (loanAmount, loanType, repaymentPeriod) => {
 
     const appraisalFee = (loanAmount * settings.appraisalFeePercentage) / 100;
     const netLoanAmount = loanAmount - appraisalFee;
-
     const monthlyRate = interestRate / 12 / 100;
     const totalInterest = loanAmount * monthlyRate * repaymentPeriod;
     const totalRepayment = loanAmount + totalInterest;
     const monthlyPayment = totalRepayment / repaymentPeriod;
 
-    return {
-        appraisalFee,
-        netLoanAmount,
-        interestRate,
-        totalInterest,
-        totalRepayment,
-        monthlyPayment
-    };
+    return { appraisalFee, netLoanAmount, interestRate, totalInterest, totalRepayment, monthlyPayment };
 };
 
 // ===== MEMBER ROUTES =====
@@ -256,7 +247,6 @@ const calculateLoanDetails = async (loanAmount, loanType, repaymentPeriod) => {
 app.post('/api/members/register', async (req, res) => {
     try {
         const hashedPassword = await bcrypt.hash(req.body.password, 10);
-        
         const member = new Member({
             firstName: req.body.firstName,
             lastName: req.body.lastName,
@@ -314,15 +304,7 @@ app.post('/api/members/login', async (req, res) => {
             process.env.JWT_SECRET || 'your-secret-key'
         );
 
-        res.json({ 
-            token, 
-            member: {
-                id: member._id,
-                firstName: member.firstName,
-                lastName: member.lastName,
-                email: member.email
-            }
-        });
+        res.json({ token, member: { id: member._id, firstName: member.firstName, lastName: member.lastName, email: member.email } });
     } catch (error) {
         res.status(400).json({ message: error.message });
     }
@@ -334,15 +316,9 @@ app.get('/api/members/profile', authenticateToken, async (req, res) => {
         if (!member) return res.status(404).json({ message: 'Member not found' });
 
         const loans = await Loan.find({ memberId: member._id });
-        
-        const outstandingLoans = loans.filter(loan => 
-            loan.status === 'approved' || loan.status === 'repaying'
-        ).reduce((sum, loan) => sum + loan.remainingBalance, 0);
-
-        const pendingWithdrawals = await Withdrawal.find({ 
-            memberId: member._id, 
-            status: 'pending' 
-        });
+        const outstandingLoans = loans.filter(loan => loan.status === 'approved' || loan.status === 'repaying')
+            .reduce((sum, loan) => sum + loan.remainingBalance, 0);
+        const pendingWithdrawals = await Withdrawal.find({ memberId: member._id, status: 'pending' });
 
         res.json({
             member: {
@@ -371,30 +347,14 @@ app.get('/api/loans/info', authenticateToken, async (req, res) => {
         const member = await Member.findById(req.user.id);
         const settings = await SaccoSettings.findOne();
         
-        const outstandingLoans = await Loan.find({ 
-            memberId: member._id, 
-            status: { $in: ['approved', 'repaying'] } 
-        });
-
+        const outstandingLoans = await Loan.find({ memberId: member._id, status: { $in: ['approved', 'repaying'] } });
         const totalOutstanding = outstandingLoans.reduce((sum, loan) => sum + loan.remainingBalance, 0);
         const maxLoan = member.currentShares * settings.maxLoanMultiplier;
 
         res.json({
-            memberDetails: {
-                currentShares: member.currentShares,
-                totalSavings: member.totalSavings,
-                dividendBalance: member.dividendBalance
-            },
-            loanLimits: {
-                maxLoanAmount: maxLoan,
-                maxLoanMultiplier: settings.maxLoanMultiplier,
-                minShares: settings.minSharesPerMember
-            },
-            outstandingLoans: {
-                count: outstandingLoans.length,
-                totalAmount: totalOutstanding,
-                canApplyForNewLoan: totalOutstanding === 0 || outstandingLoans.length < 2
-            },
+            memberDetails: { currentShares: member.currentShares, totalSavings: member.totalSavings, dividendBalance: member.dividendBalance },
+            loanLimits: { maxLoanAmount: maxLoan, maxLoanMultiplier: settings.maxLoanMultiplier, minShares: settings.minSharesPerMember },
+            outstandingLoans: { count: outstandingLoans.length, totalAmount: totalOutstanding },
             rates: {
                 developmentLoanRate: settings.developmentLoanRate,
                 emergencyLoanRate: settings.emergencyLoanRate,
@@ -415,45 +375,25 @@ app.post('/api/loans/request', authenticateToken, async (req, res) => {
         const settings = await SaccoSettings.findOne();
 
         if (member.currentShares < settings.minSharesPerMember) {
-            return res.status(400).json({ 
-                message: `Minimum shares required: KSh ${settings.minSharesPerMember}` 
-            });
+            return res.status(400).json({ message: `Minimum shares required: KSh ${settings.minSharesPerMember}` });
         }
 
         const maxLoan = member.currentShares * settings.maxLoanMultiplier;
         if (req.body.amount > maxLoan) {
-            return res.status(400).json({ 
-                message: `Loan amount cannot exceed KSh ${maxLoan} (4x your shares)` 
-            });
+            return res.status(400).json({ message: `Loan amount cannot exceed KSh ${maxLoan}` });
         }
 
-        const outstandingLoans = await Loan.find({ 
-            memberId: member._id, 
-            status: { $in: ['approved', 'repaying'] } 
-        });
-
+        const outstandingLoans = await Loan.find({ memberId: member._id, status: { $in: ['approved', 'repaying'] } });
         if (outstandingLoans.length > 0 && req.body.loanType === 'emergency') {
-            return res.status(400).json({ 
-                message: 'Cannot apply for emergency loan while having other outstanding loans' 
-            });
+            return res.status(400).json({ message: 'Cannot apply for emergency loan while having other outstanding loans' });
         }
 
-        const pendingWithdrawal = await Withdrawal.findOne({
-            memberId: member._id,
-            status: 'pending'
-        });
-
+        const pendingWithdrawal = await Withdrawal.findOne({ memberId: member._id, status: 'pending' });
         if (pendingWithdrawal) {
-            return res.status(400).json({ 
-                message: 'Cannot apply for loan while withdrawal request is pending' 
-            });
+            return res.status(400).json({ message: 'Cannot apply for loan while withdrawal request is pending' });
         }
 
-        const loanDetails = await calculateLoanDetails(
-            req.body.amount,
-            req.body.loanType,
-            req.body.repaymentPeriod
-        );
+        const loanDetails = await calculateLoanDetails(req.body.amount, req.body.loanType, req.body.repaymentPeriod);
 
         const loan = new Loan({
             memberId: member._id,
@@ -475,20 +415,7 @@ app.post('/api/loans/request', authenticateToken, async (req, res) => {
         });
 
         await loan.save();
-        
-        res.status(201).json({ 
-            message: 'Loan application submitted successfully',
-            loan: loan,
-            loanDetails: {
-                requestedAmount: req.body.amount,
-                appraisalFee: loanDetails.appraisalFee,
-                netLoanAmount: loanDetails.netLoanAmount,
-                interestRate: loanDetails.interestRate,
-                totalInterest: loanDetails.totalInterest,
-                monthlyPayment: loanDetails.monthlyPayment,
-                totalRepayment: loanDetails.totalRepayment
-            }
-        });
+        res.status(201).json({ message: 'Loan application submitted successfully', loan, loanDetails });
     } catch (error) {
         res.status(400).json({ message: error.message });
     }
@@ -509,40 +436,24 @@ app.post('/api/shares/withdraw-request', authenticateToken, async (req, res) => 
         if (!member) return res.status(404).json({ message: 'Member not found' });
 
         const settings = await SaccoSettings.findOne();
-
-        const outstandingLoans = await Loan.find({
-            memberId: member._id,
-            status: { $in: ['approved', 'repaying'] }
-        });
+        const outstandingLoans = await Loan.find({ memberId: member._id, status: { $in: ['approved', 'repaying'] } });
 
         if (outstandingLoans.length > 0) {
-            return res.status(400).json({ 
-                message: 'Cannot withdraw shares while having outstanding loans. Pay off all loans first.' 
-            });
+            return res.status(400).json({ message: 'Cannot withdraw shares while having outstanding loans' });
         }
 
         if (req.body.sharesRequested > member.currentShares) {
-            return res.status(400).json({ 
-                message: 'Cannot withdraw more shares than you currently have' 
-            });
+            return res.status(400).json({ message: 'Cannot withdraw more shares than you currently have' });
         }
 
         const sharesAfterWithdrawal = member.currentShares - req.body.sharesRequested;
         if (sharesAfterWithdrawal < settings.minSharesPerMember) {
-            return res.status(400).json({ 
-                message: `Must retain minimum KSh ${settings.minSharesPerMember} in shares` 
-            });
+            return res.status(400).json({ message: `Must retain minimum KSh ${settings.minSharesPerMember}` });
         }
 
-        const pendingWithdrawal = await Withdrawal.findOne({
-            memberId: member._id,
-            status: 'pending'
-        });
-
+        const pendingWithdrawal = await Withdrawal.findOne({ memberId: member._id, status: 'pending' });
         if (pendingWithdrawal) {
-            return res.status(400).json({ 
-                message: 'You already have a pending withdrawal request' 
-            });
+            return res.status(400).json({ message: 'You already have a pending withdrawal request' });
         }
 
         const withdrawal = new Withdrawal({
@@ -556,11 +467,7 @@ app.post('/api/shares/withdraw-request', authenticateToken, async (req, res) => 
         });
 
         await withdrawal.save();
-
-        res.status(201).json({ 
-            message: 'Withdrawal request submitted successfully',
-            withdrawal: withdrawal
-        });
+        res.status(201).json({ message: 'Withdrawal request submitted successfully', withdrawal });
     } catch (error) {
         res.status(400).json({ message: error.message });
     }
@@ -627,11 +534,7 @@ app.put('/api/admin/approve-member/:id', authenticateAdmin, async (req, res) => 
     try {
         const member = await Member.findByIdAndUpdate(
             req.params.id,
-            {
-                status: 'approved',
-                approvedDate: new Date(),
-                approvedBy: req.user.username
-            },
+            { status: 'approved', approvedDate: new Date(), approvedBy: req.user.username },
             { new: true }
         );
 
@@ -650,12 +553,7 @@ app.put('/api/admin/approve-member/:id', authenticateAdmin, async (req, res) => 
 
 app.put('/api/admin/reject-member/:id', authenticateAdmin, async (req, res) => {
     try {
-        const member = await Member.findByIdAndUpdate(
-            req.params.id,
-            { status: 'rejected' },
-            { new: true }
-        );
-
+        const member = await Member.findByIdAndUpdate(req.params.id, { status: 'rejected' }, { new: true });
         res.json({ message: 'Member rejected', member });
     } catch (error) {
         res.status(400).json({ message: error.message });
@@ -675,12 +573,7 @@ app.put('/api/admin/approve-loan/:id', authenticateAdmin, async (req, res) => {
     try {
         const loan = await Loan.findByIdAndUpdate(
             req.params.id,
-            {
-                status: 'approved',
-                approvalDate: new Date(),
-                approvedBy: req.user.username,
-                nextPaymentDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-            },
+            { status: 'approved', approvalDate: new Date(), approvedBy: req.user.username, nextPaymentDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
             { new: true }
         );
 
@@ -709,15 +602,7 @@ app.put('/api/admin/approve-loan/:id', authenticateAdmin, async (req, res) => {
 
 app.put('/api/admin/reject-loan/:id', authenticateAdmin, async (req, res) => {
     try {
-        const loan = await Loan.findByIdAndUpdate(
-            req.params.id,
-            { 
-                status: 'rejected',
-                rejectionReason: req.body.reason
-            },
-            { new: true }
-        );
-
+        const loan = await Loan.findByIdAndUpdate(req.params.id, { status: 'rejected', rejectionReason: req.body.reason }, { new: true });
         res.json({ message: 'Loan rejected', loan });
     } catch (error) {
         res.status(400).json({ message: error.message });
@@ -744,12 +629,7 @@ app.put('/api/admin/approve-withdrawal/:id', authenticateAdmin, async (req, res)
 
         const updatedWithdrawal = await Withdrawal.findByIdAndUpdate(
             req.params.id,
-            {
-                status: 'completed',
-                approvalDate: new Date(),
-                completionDate: new Date(),
-                approvedBy: req.user.username
-            },
+            { status: 'completed', approvalDate: new Date(), completionDate: new Date(), approvedBy: req.user.username },
             { new: true }
         );
 
@@ -758,7 +638,7 @@ app.put('/api/admin/approve-withdrawal/:id', authenticateAdmin, async (req, res)
             memberName: member.firstName + ' ' + member.lastName,
             type: 'share_withdrawal',
             amount: withdrawal.withdrawalAmount,
-            description: `Share withdrawal approved`,
+            description: 'Share withdrawal approved',
             referenceId: withdrawal._id
         });
         await transaction.save();
@@ -771,15 +651,7 @@ app.put('/api/admin/approve-withdrawal/:id', authenticateAdmin, async (req, res)
 
 app.put('/api/admin/reject-withdrawal/:id', authenticateAdmin, async (req, res) => {
     try {
-        const withdrawal = await Withdrawal.findByIdAndUpdate(
-            req.params.id,
-            { 
-                status: 'rejected',
-                rejectionReason: req.body.reason
-            },
-            { new: true }
-        );
-
+        const withdrawal = await Withdrawal.findByIdAndUpdate(req.params.id, { status: 'rejected', rejectionReason: req.body.reason }, { new: true });
         res.json({ message: 'Withdrawal rejected', withdrawal });
     } catch (error) {
         res.status(400).json({ message: error.message });
@@ -789,17 +661,12 @@ app.put('/api/admin/reject-withdrawal/:id', authenticateAdmin, async (req, res) 
 app.put('/api/admin/settings', authenticateAdmin, async (req, res) => {
     try {
         let settings = await SaccoSettings.findOne();
-        if (!settings) {
-            settings = new SaccoSettings();
-        }
+        if (!settings) settings = new SaccoSettings();
 
         settings.developmentLoanRate = req.body.developmentLoanRate || settings.developmentLoanRate;
         settings.emergencyLoanRate = req.body.emergencyLoanRate || settings.emergencyLoanRate;
         settings.educationLoanRate = req.body.educationLoanRate || settings.educationLoanRate;
         settings.currentDividendPercentage = req.body.currentDividendPercentage || settings.currentDividendPercentage;
-        settings.appraisalFeePercentage = req.body.appraisalFeePercentage || settings.appraisalFeePercentage;
-        settings.minCapitalRetention = req.body.minCapitalRetention || settings.minCapitalRetention;
-        settings.fixedDividendReserve = req.body.fixedDividendReserve || settings.fixedDividendReserve;
         settings.lastUpdated = new Date();
         settings.updatedBy = req.user.username;
 
@@ -847,13 +714,20 @@ app.get('/api/admin/members', authenticateAdmin, async (req, res) => {
     }
 });
 
+// Serve static files
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // ===== START SERVER =====
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`\n✓ Server running on port ${PORT}`);
+    console.log(`✓ Server running on port ${PORT}`);
     console.log(`✓ Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log('\n📝 Admin Credentials:');
+    console.log('\n📝 Default Admin Credentials:');
     console.log('   Username: admin');
     console.log('   Password: admin123');
     console.log('\n═══════════════════════════════════════\n');
 });
+
+module.exports = app;
