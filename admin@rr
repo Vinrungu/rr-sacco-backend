@@ -12,8 +12,9 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-console.log('Connecting to MongoDB...');
-console.log('URI:', process.env.MONGODB_URI ? 'Connected' : 'Not set');
+console.log('\n═══════════════════════════════════════');
+console.log('🚀 RR SACCO Server Starting...');
+console.log('═══════════════════════════════════════\n');
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI, {
@@ -22,7 +23,8 @@ mongoose.connect(process.env.MONGODB_URI, {
 })
 .then(() => {
     console.log('✓ MongoDB Connected Successfully!');
-    initializeAdminUser(); // Create default admin
+    initializeAdminUser();
+    initializeSaccoSettings();
 })
 .catch(err => {
     console.log('✗ MongoDB Connection Error:', err.message);
@@ -31,7 +33,6 @@ mongoose.connect(process.env.MONGODB_URI, {
 
 // ===== SCHEMAS =====
 
-// Member Schema
 const memberSchema = new mongoose.Schema({
     firstName: { type: String, required: true },
     lastName: { type: String, required: true },
@@ -57,7 +58,6 @@ const memberSchema = new mongoose.Schema({
     monthlyContribution: { type: Number, default: 0 }
 });
 
-// Loan Schema
 const loanSchema = new mongoose.Schema({
     memberId: mongoose.Schema.Types.ObjectId,
     memberName: String,
@@ -90,7 +90,6 @@ const loanSchema = new mongoose.Schema({
     ]
 });
 
-// Withdrawal Schema
 const withdrawalSchema = new mongoose.Schema({
     memberId: mongoose.Schema.Types.ObjectId,
     memberName: String,
@@ -106,7 +105,6 @@ const withdrawalSchema = new mongoose.Schema({
     hasOutstandingLoans: Boolean
 });
 
-// Dividend Schema
 const dividendSchema = new mongoose.Schema({
     memberId: mongoose.Schema.Types.ObjectId,
     memberName: String,
@@ -120,7 +118,6 @@ const dividendSchema = new mongoose.Schema({
     status: { type: String, enum: ['pending', 'distributed'], default: 'pending' }
 });
 
-// Transaction Schema
 const transactionSchema = new mongoose.Schema({
     memberId: mongoose.Schema.Types.ObjectId,
     memberName: String,
@@ -132,7 +129,6 @@ const transactionSchema = new mongoose.Schema({
     balance: Number
 });
 
-// SACCO Settings Schema
 const saccoSettingsSchema = new mongoose.Schema({
     totalMembers: { type: Number, default: 0 },
     totalShares: { type: Number, default: 0 },
@@ -152,7 +148,6 @@ const saccoSettingsSchema = new mongoose.Schema({
     updatedBy: String
 });
 
-// Admin Schema
 const adminSchema = new mongoose.Schema({
     username: { type: String, unique: true, required: true },
     email: { type: String, unique: true, required: true },
@@ -170,7 +165,8 @@ const Transaction = mongoose.model('Transaction', transactionSchema);
 const SaccoSettings = mongoose.model('SaccoSettings', saccoSettingsSchema);
 const Admin = mongoose.model('Admin', adminSchema);
 
-// ===== INITIALIZE ADMIN USER =====
+// ===== INITIALIZE ADMIN & SETTINGS =====
+
 async function initializeAdminUser() {
     try {
         const existingAdmin = await Admin.findOne({ username: 'admin' });
@@ -181,21 +177,28 @@ async function initializeAdminUser() {
                 email: 'admin@rrsacco.co.ke',
                 password: hashedPassword
             });
-            console.log('✓ Default admin created: username=admin, password=admin123');
-        }
-
-        // Initialize SACCO settings if not exists
-        const existingSettings = await SaccoSettings.findOne();
-        if (!existingSettings) {
-            await SaccoSettings.create({});
-            console.log('✓ SACCO settings initialized');
+            console.log('✓ Default admin created');
+            console.log('  Username: admin');
+            console.log('  Password: admin123');
         }
     } catch (error) {
         console.log('Error initializing admin:', error.message);
     }
 }
 
-// ===== MIDDLEWARE FUNCTIONS =====
+async function initializeSaccoSettings() {
+    try {
+        const existingSettings = await SaccoSettings.findOne();
+        if (!existingSettings) {
+            await SaccoSettings.create({});
+            console.log('✓ SACCO settings initialized');
+        }
+    } catch (error) {
+        console.log('Error initializing settings:', error.message);
+    }
+}
+
+// ===== MIDDLEWARE =====
 
 const authenticateToken = (req, res, next) => {
     const token = req.headers['authorization']?.split(' ')[1];
@@ -250,7 +253,6 @@ const calculateLoanDetails = async (loanAmount, loanType, repaymentPeriod) => {
 
 // ===== MEMBER ROUTES =====
 
-// Register Member
 app.post('/api/members/register', async (req, res) => {
     try {
         const hashedPassword = await bcrypt.hash(req.body.password, 10);
@@ -292,7 +294,6 @@ app.post('/api/members/register', async (req, res) => {
     }
 });
 
-// Member Login
 app.post('/api/members/login', async (req, res) => {
     try {
         const member = await Member.findOne({ email: req.body.email });
@@ -327,7 +328,6 @@ app.post('/api/members/login', async (req, res) => {
     }
 });
 
-// Get Member Profile
 app.get('/api/members/profile', authenticateToken, async (req, res) => {
     try {
         const member = await Member.findById(req.user.id);
@@ -366,7 +366,6 @@ app.get('/api/members/profile', authenticateToken, async (req, res) => {
     }
 });
 
-// Get Loan Information
 app.get('/api/loans/info', authenticateToken, async (req, res) => {
     try {
         const member = await Member.findById(req.user.id);
@@ -408,7 +407,6 @@ app.get('/api/loans/info', authenticateToken, async (req, res) => {
     }
 });
 
-// Request Loan
 app.post('/api/loans/request', authenticateToken, async (req, res) => {
     try {
         const member = await Member.findById(req.user.id);
@@ -496,7 +494,6 @@ app.post('/api/loans/request', authenticateToken, async (req, res) => {
     }
 });
 
-// Get Member Loans
 app.get('/api/members/loans', authenticateToken, async (req, res) => {
     try {
         const loans = await Loan.find({ memberId: req.user.id });
@@ -506,7 +503,6 @@ app.get('/api/members/loans', authenticateToken, async (req, res) => {
     }
 });
 
-// Request Share Withdrawal
 app.post('/api/shares/withdraw-request', authenticateToken, async (req, res) => {
     try {
         const member = await Member.findById(req.user.id);
@@ -570,7 +566,6 @@ app.post('/api/shares/withdraw-request', authenticateToken, async (req, res) => 
     }
 });
 
-// Get Member Withdrawals
 app.get('/api/members/withdrawals', authenticateToken, async (req, res) => {
     try {
         const withdrawals = await Withdrawal.find({ memberId: req.user.id });
@@ -580,7 +575,6 @@ app.get('/api/members/withdrawals', authenticateToken, async (req, res) => {
     }
 });
 
-// Get Member Dividends
 app.get('/api/members/dividends', authenticateToken, async (req, res) => {
     try {
         const dividends = await Dividend.find({ memberId: req.user.id });
@@ -590,7 +584,6 @@ app.get('/api/members/dividends', authenticateToken, async (req, res) => {
     }
 });
 
-// Get Member Transactions
 app.get('/api/members/transactions', authenticateToken, async (req, res) => {
     try {
         const transactions = await Transaction.find({ memberId: req.user.id }).sort({ date: -1 });
@@ -602,7 +595,6 @@ app.get('/api/members/transactions', authenticateToken, async (req, res) => {
 
 // ===== ADMIN ROUTES =====
 
-// Admin Login
 app.post('/api/admin/login', async (req, res) => {
     try {
         const admin = await Admin.findOne({ username: req.body.username });
@@ -622,7 +614,6 @@ app.post('/api/admin/login', async (req, res) => {
     }
 });
 
-// Get All Pending Members
 app.get('/api/admin/pending-members', authenticateAdmin, async (req, res) => {
     try {
         const members = await Member.find({ status: 'pending' }).select('-password');
@@ -632,7 +623,6 @@ app.get('/api/admin/pending-members', authenticateAdmin, async (req, res) => {
     }
 });
 
-// Approve Member
 app.put('/api/admin/approve-member/:id', authenticateAdmin, async (req, res) => {
     try {
         const member = await Member.findByIdAndUpdate(
@@ -658,7 +648,6 @@ app.put('/api/admin/approve-member/:id', authenticateAdmin, async (req, res) => 
     }
 });
 
-// Reject Member
 app.put('/api/admin/reject-member/:id', authenticateAdmin, async (req, res) => {
     try {
         const member = await Member.findByIdAndUpdate(
@@ -673,7 +662,6 @@ app.put('/api/admin/reject-member/:id', authenticateAdmin, async (req, res) => {
     }
 });
 
-// Get All Pending Loans
 app.get('/api/admin/pending-loans', authenticateAdmin, async (req, res) => {
     try {
         const loans = await Loan.find({ status: 'pending' });
@@ -683,7 +671,6 @@ app.get('/api/admin/pending-loans', authenticateAdmin, async (req, res) => {
     }
 });
 
-// Approve Loan
 app.put('/api/admin/approve-loan/:id', authenticateAdmin, async (req, res) => {
     try {
         const loan = await Loan.findByIdAndUpdate(
@@ -720,7 +707,6 @@ app.put('/api/admin/approve-loan/:id', authenticateAdmin, async (req, res) => {
     }
 });
 
-// Reject Loan
 app.put('/api/admin/reject-loan/:id', authenticateAdmin, async (req, res) => {
     try {
         const loan = await Loan.findByIdAndUpdate(
@@ -738,7 +724,6 @@ app.put('/api/admin/reject-loan/:id', authenticateAdmin, async (req, res) => {
     }
 });
 
-// Get All Pending Withdrawals
 app.get('/api/admin/pending-withdrawals', authenticateAdmin, async (req, res) => {
     try {
         const withdrawals = await Withdrawal.find({ status: 'pending' });
@@ -748,7 +733,6 @@ app.get('/api/admin/pending-withdrawals', authenticateAdmin, async (req, res) =>
     }
 });
 
-// Approve Withdrawal
 app.put('/api/admin/approve-withdrawal/:id', authenticateAdmin, async (req, res) => {
     try {
         const withdrawal = await Withdrawal.findById(req.params.id);
@@ -785,7 +769,6 @@ app.put('/api/admin/approve-withdrawal/:id', authenticateAdmin, async (req, res)
     }
 });
 
-// Reject Withdrawal
 app.put('/api/admin/reject-withdrawal/:id', authenticateAdmin, async (req, res) => {
     try {
         const withdrawal = await Withdrawal.findByIdAndUpdate(
@@ -803,7 +786,6 @@ app.put('/api/admin/reject-withdrawal/:id', authenticateAdmin, async (req, res) 
     }
 });
 
-// Update SACCO Settings
 app.put('/api/admin/settings', authenticateAdmin, async (req, res) => {
     try {
         let settings = await SaccoSettings.findOne();
@@ -828,7 +810,6 @@ app.put('/api/admin/settings', authenticateAdmin, async (req, res) => {
     }
 });
 
-// Get SACCO Overview
 app.get('/api/admin/overview', authenticateAdmin, async (req, res) => {
     try {
         const settings = await SaccoSettings.findOne();
@@ -857,7 +838,6 @@ app.get('/api/admin/overview', authenticateAdmin, async (req, res) => {
     }
 });
 
-// Get All Members (for admin)
 app.get('/api/admin/members', authenticateAdmin, async (req, res) => {
     try {
         const members = await Member.find({ status: 'approved' }).select('-password');
@@ -870,11 +850,10 @@ app.get('/api/admin/members', authenticateAdmin, async (req, res) => {
 // ===== START SERVER =====
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`\n═══════════════════════════════════════`);
-    console.log(`✓ RR SACCO Server Running`);
-    console.log(`✓ Port: ${PORT}`);
-    console.log(`✓ Environment: ${process.env.NODE_ENV}`);
-    console.log(`═══════════════════════════════════════\n`);
-    console.log('Ready for requests!');
-    console.log('Admin Login: admin / admin123\n');
+    console.log(`\n✓ Server running on port ${PORT}`);
+    console.log(`✓ Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log('\n📝 Admin Credentials:');
+    console.log('   Username: admin');
+    console.log('   Password: admin123');
+    console.log('\n═══════════════════════════════════════\n');
 });
